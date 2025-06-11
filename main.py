@@ -1,19 +1,20 @@
+import os
+import json
+import mimetypes
+from dotenv import load_dotenv
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
+from tkinterdnd2 import DND_FILES, TkinterDnD
 import google.generativeai as genai
-import os
-import mimetypes
-import json
-from dotenv import load_dotenv
 
-# APIキー設定
+# ===== APIキー設定 =====
 load_dotenv()
 api_key = os.getenv("GENAI_API_KEY")
 if not api_key:
     raise ValueError("環境変数 GENAI_API_KEY が見つかりません。")
 genai.configure(api_key=api_key)
 
-# モデル初期化
+# ===== モデル初期化関数 =====
 def init_model(system_instruction="", history_param=None):
     if system_instruction.strip():
         model = genai.GenerativeModel(model_name='gemini-2.0-flash', system_instruction=system_instruction.strip())
@@ -21,27 +22,23 @@ def init_model(system_instruction="", history_param=None):
         model = genai.GenerativeModel(model_name='gemini-2.0-flash')
     return model.start_chat(history=history_param or [])
 
-# グローバル変数
+# ===== グローバル変数 =====
 system_instruction = ""
 convo = init_model(system_instruction)
 history = []
 modelName = "モデル"
 
-# ウィンドウ初期化
-window = tk.Tk()
+# ===== Tkinter ウィンドウ初期化 =====
+window = TkinterDnD.Tk()
 window.title("Gemini チャット")
 window.geometry("800x720")
 
-# システム命令入力欄
+# ===== システム命令入力欄 =====
 sys_inst_frame = tk.Frame(window)
 sys_inst_frame.pack(fill=tk.X, padx=10, pady=5)
 tk.Label(sys_inst_frame, text="システム命令:").pack(side=tk.LEFT)
 sys_inst_entry = tk.Entry(sys_inst_frame)
 sys_inst_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-
-# 会話履歴表示エリア
-chat_area = scrolledtext.ScrolledText(window, wrap=tk.WORD, state='disabled')
-chat_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
 def apply_system_instruction():
     global convo, history, system_instruction
@@ -55,12 +52,9 @@ def apply_system_instruction():
 apply_inst_btn = tk.Button(sys_inst_frame, text="適用", command=apply_system_instruction)
 apply_inst_btn.pack(side=tk.LEFT)
 
-# 入力欄
-input_frame = tk.Frame(window)
-input_frame.pack(fill=tk.X, padx=10, pady=5)
-
-user_input = tk.Entry(input_frame)
-user_input.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+# ===== 会話履歴表示エリア =====
+chat_area = scrolledtext.ScrolledText(window, wrap=tk.WORD, state='disabled')
+chat_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
 def display_message(sender, text):
     chat_area.configure(state='normal')
@@ -72,6 +66,13 @@ def clear_chat_area():
     chat_area.configure(state='normal')
     chat_area.delete("1.0", tk.END)
     chat_area.configure(state='disabled')
+
+# ===== 入力欄 + 送信ボタン =====
+input_frame = tk.Frame(window)
+input_frame.pack(fill=tk.X, padx=10, pady=5)
+
+user_input = tk.Entry(input_frame)
+user_input.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
 
 def send_text():
     message = user_input.get().strip()
@@ -95,12 +96,13 @@ send_button.pack(side=tk.RIGHT)
 
 window.bind('<Return>', lambda event: send_text())
 
-# メディア送信共通処理
+# ===== メディア送信 =====
 def send_media_file(allowed_types):
     file_path = filedialog.askopenfilename(filetypes=allowed_types)
-    if not file_path:
-        return
+    if file_path:
+        handle_dropped_file(file_path)
 
+def handle_dropped_file(file_path):
     mime_type, _ = mimetypes.guess_type(file_path)
     if not mime_type or not (mime_type.startswith(("image/", "video/", "audio/")) or mime_type == "application/pdf"):
         display_message("[システム]", "対応していないメディア形式です。")
@@ -132,31 +134,34 @@ def send_media_file(allowed_types):
     except Exception as e:
         display_message("[エラー]", f"{type(e).__name__} - {e}")
 
-# メディア送信
+# ===== ドロップ処理の設定 =====
+def handle_drop(event):
+    file_paths = window.tk.splitlist(event.data)
+    for file_path in file_paths:
+        if os.path.isfile(file_path):
+            handle_dropped_file(file_path)
+
+chat_area.drop_target_register(DND_FILES)
+chat_area.dnd_bind('<<Drop>>', handle_drop)
+
+window.drop_target_register(DND_FILES)
+window.dnd_bind('<<Drop>>', handle_drop)
+
+# ===== メディア送信ボタン =====
 media_frame = tk.Frame(window)
 media_frame.pack(pady=5)
 
-img_button = tk.Button(media_frame, text="画像を送信", command=lambda: send_media_file([("画像", "*.png *.jpg *.jpeg *.webp *.bmp")]))
-img_button.pack(side=tk.LEFT, padx=5)
+tk.Button(media_frame, text="画像を送信", command=lambda: send_media_file([("画像", "*.png *.jpg *.jpeg *.webp *.bmp")])).pack(side=tk.LEFT, padx=5)
+tk.Button(media_frame, text="動画を送信", command=lambda: send_media_file([("動画", "*.mp4 *.mov *.webm *.avi")])).pack(side=tk.LEFT, padx=5)
+tk.Button(media_frame, text="PDFを送信", command=lambda: send_media_file([("PDF", "*.pdf")])).pack(side=tk.LEFT, padx=5)
+tk.Button(media_frame, text="音声を送信", command=lambda: send_media_file([("音声", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg")])).pack(side=tk.LEFT, padx=5)
 
-mov_button = tk.Button(media_frame, text="動画を送信", command=lambda: send_media_file([("動画", "*.mp4 *.mov *.webm *.avi")]))
-mov_button.pack(side=tk.LEFT, padx=5)
-
-pdf_button = tk.Button(media_frame, text="PDFを送信", command=lambda: send_media_file([("PDF", "*.pdf")]))
-pdf_button.pack(side=tk.LEFT, padx=5)
-
-audio_button = tk.Button(media_frame, text="音声を送信", command=lambda: send_media_file([("音声", "*.mp3 *.wav *.m4a *.aac *.flac")]))
-audio_button.pack(side=tk.LEFT, padx=5)
-
-# 会話保存・読み込み・リセット
+# ===== 会話保存・読み込み・リセット =====
 def save_chat():
     if not history:
         messagebox.showinfo("保存", "保存する会話履歴がありません。")
         return
-    path = filedialog.asksaveasfilename(
-        defaultextension=".json",
-        filetypes=[("JSONファイル", "*.json"), ("すべてのファイル", "*.*")]
-    )
+    path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSONファイル", "*.json"), ("すべてのファイル", "*.*")])
     if not path:
         return
     try:
@@ -168,9 +173,7 @@ def save_chat():
 
 def load_chat():
     global convo, history, system_instruction
-    path = filedialog.askopenfilename(
-        filetypes=[("JSONファイル", "*.json"), ("すべてのファイル", "*.*")]
-    )
+    path = filedialog.askopenfilename(filetypes=[("JSONファイル", "*.json"), ("すべてのファイル", "*.*")])
     if not path:
         return
     try:
@@ -185,7 +188,6 @@ def load_chat():
         for log in history:
             role = "[あなた]" if log['role'] == "user" else "[モデル]"
             parts = log.get('parts')
-            # partsがリストか単一文字列か判定
             if isinstance(parts, list):
                 display_parts = []
                 for p in parts:
@@ -212,14 +214,9 @@ def reset_chat():
 btn_frame = tk.Frame(window)
 btn_frame.pack(pady=5)
 
-save_btn = tk.Button(btn_frame, text="会話を保存", command=save_chat)
-save_btn.pack(side=tk.LEFT, padx=5)
+tk.Button(btn_frame, text="会話を保存", command=save_chat).pack(side=tk.LEFT, padx=5)
+tk.Button(btn_frame, text="会話を読み込み", command=load_chat).pack(side=tk.LEFT, padx=5)
+tk.Button(btn_frame, text="会話リセット", command=reset_chat).pack(side=tk.LEFT, padx=5)
 
-load_btn = tk.Button(btn_frame, text="会話を読み込み", command=load_chat)
-load_btn.pack(side=tk.LEFT, padx=5)
-
-reset_btn = tk.Button(btn_frame, text="会話リセット", command=reset_chat)
-reset_btn.pack(side=tk.LEFT, padx=5)
-
-# GUI起動
+# ===== GUI起動 =====
 window.mainloop()
