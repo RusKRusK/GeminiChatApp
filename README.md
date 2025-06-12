@@ -3,9 +3,9 @@ GeminiAPIとのチャットプログラムをGUI化しました。
 
 ## Usage
 `.env`にGemini APIのキーを入力してください。
-使用するパッケージがない場合は、下記のコマンドでインストールしてください。
+下記のコマンドでパッケージをインストールしてください。
 ```
-pip install google-generativeai python-dotenv
+pip install -r requirements.txt
 ```
 `main.py`を実行すれば起動します。
 ```
