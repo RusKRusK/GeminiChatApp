@@ -1,0 +1,5 @@
+python-dotenv>=1.0.0
+tkinterdnd2>=0.3.0
+tkinterweb>=3.24.0
+google-generativeai>=0.5.0
+markdown>=3.5.0
