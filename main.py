@@ -1,10 +1,9 @@
 import os
 import json
 import mimetypes
-import re
 from dotenv import load_dotenv
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, scrolledtext
 from tkinterdnd2 import DND_FILES, TkinterDnD
 from tkinterweb import HtmlFrame
 import google.generativeai as genai
@@ -34,19 +33,19 @@ html_initialized = False
 
 # Tkinter ウィンドウ初期化
 window = TkinterDnD.Tk()
-window.title("Gemini チャット (HTML表示)")
-window.geometry("900x800")
+window.title("Gemini チャット")
+window.geometry("900x900")
 
 # システム命令入力欄
 sys_inst_frame = tk.Frame(window)
 sys_inst_frame.pack(fill=tk.X, padx=10, pady=5)
-tk.Label(sys_inst_frame, text="システム命令:").pack(side=tk.LEFT)
-sys_inst_entry = tk.Entry(sys_inst_frame)
+tk.Label(sys_inst_frame, text="システム命令:").pack(anchor=tk.W)
+sys_inst_entry = scrolledtext.ScrolledText(sys_inst_frame, height=3, wrap=tk.WORD)
 sys_inst_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
 def apply_system_instruction():
     global convo, history, system_instruction, chat_markdown
-    instruction = sys_inst_entry.get()
+    instruction = sys_inst_entry.get("1.0", tk.END).strip()
     system_instruction = instruction
     convo = init_model(system_instruction)
     history.clear()
@@ -171,17 +170,19 @@ def clear_chat_area():
     chat_markdown = ""
     update_chat_display()
 
-# 入力・送信
+# 入力・送信（複数行対応）
 input_frame = tk.Frame(window)
 input_frame.pack(fill=tk.X, padx=10, pady=5)
-user_input = tk.Entry(input_frame)
-user_input.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
 
-def send_text():
-    message = user_input.get().strip()
+# 複数行入力用のTextウィジェット
+user_input = scrolledtext.ScrolledText(input_frame, height=4, wrap=tk.WORD)
+user_input.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+
+def send_text(event=None):
+    message = user_input.get("1.0", tk.END).strip()
     if not message:
-        return
-    user_input.delete(0, tk.END)
+        return "break"  # イベント処理を停止
+    user_input.delete("1.0", tk.END)
     add_message_to_chat("[あなた]", message)
     try:
         convo.send_message(message)
@@ -190,9 +191,20 @@ def send_text():
         history.extend([{'role': 'user', 'parts': message}, {'role': 'model', 'parts': reply}])
     except Exception as e:
         add_message_to_chat("[エラー]", f"{type(e).__name__} - {e}")
+    return "break"  # イベント処理を停止
 
-tk.Button(input_frame, text="送信", command=send_text).pack(side=tk.RIGHT)
-window.bind('<Return>', lambda event: send_text())
+# Ctrl+Enterで送信するキーバインド
+def on_ctrl_enter(event):
+    send_text()
+    return "break"  # デフォルトの改行を防ぐ
+
+user_input.bind('<Control-Return>', on_ctrl_enter)
+user_input.bind('<Control-KP_Enter>', on_ctrl_enter)  # テンキーのEnterにも対応
+
+tk.Button(input_frame, text="送信\n(Ctrl+Enter)", command=send_text).pack(side=tk.RIGHT)
+
+# Enterキーの処理を削除（通常の改行として動作）
+# window.bind('<Return>', lambda event: send_text()) # この行を削除
 
 # ドラッグ＆ドロップ メディア処理
 def handle_dropped_file(file_path):
@@ -201,8 +213,8 @@ def handle_dropped_file(file_path):
         add_message_to_chat("[システム]", "対応していないメディア形式です。")
         return
 
-    user_message = user_input.get().strip()
-    user_input.delete(0, tk.END)
+    user_message = user_input.get("1.0", tk.END).strip()
+    user_input.delete("1.0", tk.END)
     try:
         with open(file_path, "rb") as f:
             file_bytes = f.read()
@@ -236,18 +248,20 @@ def handle_drop(event):
 window.drop_target_register(DND_FILES)
 window.dnd_bind('<<Drop>>', handle_drop)
 
-# メディア送信ボタン
-media_frame = tk.Frame(window)
-media_frame.pack(pady=5)
-tk.Button(media_frame, text="画像を送信", command=lambda: send_media_file([("画像", "*.png *.jpg *.jpeg *.webp *.bmp")])).pack(side=tk.LEFT, padx=5)
-tk.Button(media_frame, text="動画を送信", command=lambda: send_media_file([("動画", "*.mp4 *.mov *.webm *.avi")])).pack(side=tk.LEFT, padx=5)
-tk.Button(media_frame, text="PDFを送信", command=lambda: send_media_file([("PDF", "*.pdf")])).pack(side=tk.LEFT, padx=5)
-tk.Button(media_frame, text="音声を送信", command=lambda: send_media_file([("音声", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg")])).pack(side=tk.LEFT, padx=5)
-
-def send_media_file(allowed_types):
-    file_path = filedialog.askopenfilename(filetypes=allowed_types)
+def send_media_file():
+    # すべてのサポートされているメディアファイル形式を一つのリストに統合
+    all_media_types = [
+        ("すべてのメディアファイル", "*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.mov *.webm *.avi *.pdf *.mp3 *.wav *.m4a *.aac *.flac *.ogg"),
+        ("画像ファイル", "*.png *.jpg *.jpeg *.webp *.bmp"),
+        ("動画ファイル", "*.mp4 *.mov *.webm *.avi"),
+        ("PDFファイル", "*.pdf"),
+        ("音声ファイル", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg"),
+        ("すべてのファイル", "*.*")
+    ]
+    file_path = filedialog.askopenfilename(filetypes=all_media_types)
     if file_path:
         handle_dropped_file(file_path)
+
 
 # 会話保存・読み込み・リセットなど
 def save_chat():
@@ -276,8 +290,8 @@ def load_chat():
         history = data.get("history", [])
         chat_markdown = data.get("chat_markdown", "")
 
-        sys_inst_entry.delete(0, tk.END)
-        sys_inst_entry.insert(0, system_instruction)
+        sys_inst_entry.delete("1.0", tk.END)
+        sys_inst_entry.insert("1.0", system_instruction)
         convo = init_model(system_instruction, history)
         update_chat_display()
         add_message_to_chat("[システム]", f"会話履歴を読み込みました: `{path}`")
@@ -295,6 +309,7 @@ def reset_chat():
 
 btn_frame = tk.Frame(window)
 btn_frame.pack(pady=5)
+tk.Button(btn_frame, text="メディアファイルを送信", command=send_media_file).pack(side=tk.LEFT, padx=5)
 tk.Button(btn_frame, text="会話を保存", command=save_chat).pack(side=tk.LEFT, padx=5)
 tk.Button(btn_frame, text="会話を読み込み", command=load_chat).pack(side=tk.LEFT, padx=5)
 tk.Button(btn_frame, text="会話リセット", command=reset_chat).pack(side=tk.LEFT, padx=5)
