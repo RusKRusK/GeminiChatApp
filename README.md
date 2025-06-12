@@ -2,7 +2,11 @@
 GeminiAPIとのチャットプログラムをGUI化しました。
 
 ## Usage
-`.env`にGemini APIのキーを入力してください。
+`main.py`と同じディレクトリに`.env`を追加して、以下の内容を書いてください。
+```
+GENAI_API_KEY=<あなたのGemini APIキーを入力>
+```
+
 下記のコマンドでパッケージをインストールしてください。
 ```
 pip install -r requirements.txt
@@ -63,7 +67,7 @@ python main.py
 | --- | ------------------------- |
 | 画像  | PNG, JPG, JPEG, WEBP, BMP |
 | 動画  | MP4, MOV, WEBM, AVI       |
-| 音声  | MP3, WAV, M4A, AAC, FLAC  |
+| 音声  | MP3, WAV, M4A, AAC, FLAC, OGG  |
 | PDF | PDF                       |
 送信方法は、送りたいメディアの種類のボタンをクリックするか、ファイルをドラッグアンドドロップしてください。
 
