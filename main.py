@@ -4,7 +4,7 @@ import mimetypes
 import re
 from dotenv import load_dotenv
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox
 from tkinterdnd2 import DND_FILES, TkinterDnD
 from tkinterweb import HtmlFrame
 import google.generativeai as genai
@@ -31,11 +31,10 @@ modelName = "モデル"
 chat_markdown = ""
 html_chat = None
 html_initialized = False
-html_update_pending = False
 
 # Tkinter ウィンドウ初期化
 window = TkinterDnD.Tk()
-window.title("Gemini チャット (Markdown + HTML表示)")
+window.title("Gemini チャット (HTML表示)")
 window.geometry("900x800")
 
 # システム命令入力欄
@@ -57,53 +56,28 @@ def apply_system_instruction():
 
 tk.Button(sys_inst_frame, text="適用", command=apply_system_instruction).pack(side=tk.LEFT)
 
-# チャット表示エリア（タブ形式）
-chat_notebook = ttk.Notebook(window)
-chat_notebook.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+# チャット表示エリア（HTMLのみ）
+chat_frame = tk.Frame(window)
+chat_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
 
-# HTMLタブ（tkinterweb 使用）
-html_frame = ttk.Frame(chat_notebook)
-chat_notebook.add(html_frame, text="HTML表示")
-
-# テキストタブ
-text_frame = ttk.Frame(chat_notebook)
-chat_notebook.add(text_frame, text="テキスト表示")
-plain_chat = scrolledtext.ScrolledText(text_frame, wrap=tk.WORD, state='disabled')
-plain_chat.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
-
-# Markdownソースタブ
-source_frame = ttk.Frame(chat_notebook)
-chat_notebook.add(source_frame, text="Markdownソース")
-source_chat = scrolledtext.ScrolledText(source_frame, wrap=tk.WORD, state='disabled')
-source_chat.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
-
-# HtmlFrameの安全な初期化
-def safe_initialize_html_frame():
+def initialize_html_frame():
     global html_chat, html_initialized
     if html_initialized:
         return True
     
     try:
-        # print("HtmlFrame初期化開始")
-        
-        # HtmlFrameを作成（最小限のオプション）
-        html_chat = HtmlFrame(html_frame, messages_enabled = False)
+        html_chat = HtmlFrame(chat_frame, messages_enabled = False)
         html_chat.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
         
         # 初期化完了まで少し待つ
         window.update_idletasks()
         time.sleep(0.1)
         
-        # 簡単なHTMLで動作確認
-        test_html = "<html><body><p>HTML表示の初期化完了</p></body></html>"
-        html_chat.load_html(test_html)
-        
         # ドラッグ&ドロップ設定
         html_chat.drop_target_register(DND_FILES)
         html_chat.dnd_bind('<<Drop>>', handle_drop)
         
         html_initialized = True
-        # print("HtmlFrame初期化完了")
         return True
         
     except Exception as e:
@@ -111,50 +85,17 @@ def safe_initialize_html_frame():
         html_initialized = False
         return False
 
-# タブ切り替え時の処理
-def on_tab_changed(event):
-    global html_update_pending
-    try:
-        selected_tab_index = event.widget.index(event.widget.select())
-        tab_text = event.widget.tab(selected_tab_index, "text")
-        
-        if tab_text == "HTML表示":
-            if not html_initialized:
-                if safe_initialize_html_frame():
-                    # 初期化成功時にHTML内容を更新
-                    window.after(100, safe_update_html_display)
-                else:
-                    print("HTML初期化失敗")
-            else:
-                # 既に初期化済みの場合は安全に更新
-                window.after(50, safe_update_html_display)
-                
-    except Exception as e:
-        print(f"タブ変更エラー: {e}")
-
-chat_notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
+# 起動時にHTML表示を初期化
+def initialize_on_startup():
+    if initialize_html_frame():
+        window.after(100, safe_update_html_display)
+    else:
+        print("HTML初期化失敗")
 
 # 表示更新
-def markdown_to_plain_text(md_text):
-    md_text = re.sub(r'```[\w]*\n(.*?)\n```', r'\1', md_text, flags=re.DOTALL)
-    md_text = re.sub(r'^#{1,6}\s+(.*)$', r'\1', md_text, flags=re.MULTILINE)
-    md_text = re.sub(r'\*\*(.*?)\*\*', r'\1', md_text)
-    md_text = re.sub(r'\*(.*?)\*', r'\1', md_text)
-    md_text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', md_text)
-    md_text = re.sub(r'^[-*+]\s+', '• ', md_text, flags=re.MULTILINE)
-    # HTML特有の表示部分を削除
-    md_text = re.sub(r'<span class=[\'"][^\'"]*[\'"]>(.*?)</span>', r'\1', md_text)
-    return md_text
-
 def safe_update_html_display():
-    global html_update_pending
     if not html_initialized or html_chat is None:
         return
-    
-    if html_update_pending:
-        return
-    
-    html_update_pending = True
     
     try:
         # 基本的なHTMLテンプレート
@@ -192,57 +133,29 @@ def safe_update_html_display():
         
         # HTMLを整形
         final_html = html_template.format(html_content)
-        
         # HTMLを読み込み
         html_chat.load_html(final_html)
-        
-        # スクロールを最下部に（遅延実行）
+        # スクロールを最下部に
         def scroll_to_bottom():
             try:
                 if html_chat and html_initialized:
                     html_chat.yview_moveto(1.0)
             except:
                 pass
-        
         window.after(200, scroll_to_bottom)
         
     except Exception as e:
         print(f"HTML表示更新エラー: {e}")
-    finally:
-        html_update_pending = False
 
 def update_chat_display():
-    # テキスト表示の更新（HTML特有の表示部分を削除）
-    plain_content = markdown_to_plain_text(chat_markdown)
-    plain_chat.config(state='normal')
-    plain_chat.delete('1.0', tk.END)
-    plain_chat.insert('1.0', plain_content)
-    plain_chat.config(state='disabled')
-    plain_chat.yview(tk.END)
-
-    # Markdownソース表示の更新（HTML特有の表示部分を削除）
-    source_content = chat_markdown
-    # HTML特有のタグを削除
-    source_content = re.sub(r'<span class=[\'"][^\'"]*[\'"]>(.*?)</span>', r'\1', source_content)
-    source_chat.config(state='normal')
-    source_chat.delete('1.0', tk.END)
-    source_chat.insert('1.0', source_content)
-    source_chat.config(state='disabled')
-    source_chat.yview(tk.END)
-    
-    # HTML表示の更新（現在のタブがHTML表示の場合のみ）
-    try:
-        current_tab_index = chat_notebook.index(chat_notebook.select())
-        current_tab_text = chat_notebook.tab(current_tab_index, "text")
-        if current_tab_text == "HTML表示" and html_initialized:
-            window.after(50, safe_update_html_display)
-    except:
-        pass
+    # HTML表示の更新
+    if html_initialized:
+        window.after(50, safe_update_html_display)
 
 def add_message_to_chat(sender, text):
     global chat_markdown
     if sender == "[あなた]":
-        chat_markdown += f"#### <span class='user'>ユーザー</span>\n{text}\n\n"
+        chat_markdown += f"#### <span class='user'>あなた</span>\n{text}\n\n"
     elif sender == "[モデル]":
         chat_markdown += f"#### <span class='model'>モデル</span>\n{text}\n\n"
     elif sender == "[システム]":
@@ -386,8 +299,11 @@ tk.Button(btn_frame, text="会話を保存", command=save_chat).pack(side=tk.LEF
 tk.Button(btn_frame, text="会話を読み込み", command=load_chat).pack(side=tk.LEFT, padx=5)
 tk.Button(btn_frame, text="会話リセット", command=reset_chat).pack(side=tk.LEFT, padx=5)
 
-# 初期化完了メッセージ
+# 起動時のメッセージ
 add_message_to_chat("[システム]", "Geminiチャットへようこそ。")
+
+# HTML表示の初期化
+window.after(500, initialize_on_startup)
 
 # GUI起動
 window.mainloop()
