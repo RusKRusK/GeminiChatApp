@@ -293,7 +293,7 @@ def handle_dropped_file(file_path):
     try:
         with open(file_path, "rb") as f:
             file_bytes = f.read()
-        file_info = f"📎 **ファイル**: `{os.path.basename(file_path)}` ({mime_type})"
+        file_info = f"**ファイル**: `{os.path.basename(file_path)}` ({mime_type})"
         if user_message:
             file_info += f"\n\n**メッセージ**: {user_message}"
         add_message_to_chat("[あなた]", file_info)
