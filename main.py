@@ -35,11 +35,12 @@ html_initialized = False
 window = TkinterDnD.Tk()
 window.title("Gemini チャット")
 window.geometry("900x900")
+window.state('zoomed')
 
 # システム命令入力欄
 sys_inst_frame = tk.Frame(window)
 sys_inst_frame.pack(fill=tk.X, padx=10, pady=5)
-tk.Label(sys_inst_frame, text="システム命令:").pack(anchor=tk.W)
+tk.Label(sys_inst_frame, text="システムインタラクション:").pack(anchor=tk.W)
 sys_inst_entry = scrolledtext.ScrolledText(sys_inst_frame, height=3, wrap=tk.WORD)
 sys_inst_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
@@ -51,11 +52,11 @@ def apply_system_instruction():
     history.clear()
     chat_markdown = ""
     clear_chat_area()
-    add_message_to_chat("[システム]", "システム命令を更新し、会話をリセットしました。")
+    add_message_to_chat("[システム]", "システムインタラクションを更新し、会話をリセットしました。")
 
 tk.Button(sys_inst_frame, text="適用", command=apply_system_instruction).pack(side=tk.LEFT)
 
-# チャット表示エリア（HTMLのみ）
+# チャット表示エリア
 chat_frame = tk.Frame(window)
 chat_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
 
@@ -170,11 +171,9 @@ def clear_chat_area():
     chat_markdown = ""
     update_chat_display()
 
-# 入力・送信（複数行対応）
+# 入力・送信
 input_frame = tk.Frame(window)
 input_frame.pack(fill=tk.X, padx=10, pady=5)
-
-# 複数行入力用のTextウィジェット
 user_input = scrolledtext.ScrolledText(input_frame, height=4, wrap=tk.WORD)
 user_input.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
 
@@ -199,12 +198,9 @@ def on_ctrl_enter(event):
     return "break"  # デフォルトの改行を防ぐ
 
 user_input.bind('<Control-Return>', on_ctrl_enter)
-user_input.bind('<Control-KP_Enter>', on_ctrl_enter)  # テンキーのEnterにも対応
+user_input.bind('<Control-KP_Enter>', on_ctrl_enter)
 
 tk.Button(input_frame, text="送信\n(Ctrl+Enter)", command=send_text).pack(side=tk.RIGHT)
-
-# Enterキーの処理を削除（通常の改行として動作）
-# window.bind('<Return>', lambda event: send_text()) # この行を削除
 
 # ドラッグ＆ドロップ メディア処理
 def handle_dropped_file(file_path):
@@ -249,7 +245,6 @@ window.drop_target_register(DND_FILES)
 window.dnd_bind('<<Drop>>', handle_drop)
 
 def send_media_file():
-    # すべてのサポートされているメディアファイル形式を一つのリストに統合
     all_media_types = [
         ("すべてのメディアファイル", "*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.mov *.webm *.avi *.pdf *.mp3 *.wav *.m4a *.aac *.flac *.ogg"),
         ("画像ファイル", "*.png *.jpg *.jpeg *.webp *.bmp"),
