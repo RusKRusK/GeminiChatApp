@@ -120,8 +120,8 @@ class GeminiChatApp(QMainWindow):
         sys_layout.setSpacing(10)
 
         sys_label = QLabel("システムインタラクション:")
-        sys_label.setMinimumWidth(110)
-        sys_label.setMaximumWidth(110)
+        sys_label.setMinimumWidth(150)
+        sys_label.setMaximumWidth(150)
         sys_layout.addWidget(sys_label)
 
         self.sys_inst_entry = QTextEdit()
