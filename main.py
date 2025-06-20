@@ -1,14 +1,16 @@
 import os
 import json
 import mimetypes
+import sys
+import re
 from dotenv import load_dotenv
-import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
-from tkinterdnd2 import DND_FILES, TkinterDnD
-from tkinterweb import HtmlFrame
+from PyQt5.QtWidgets import *
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+from PyQt5.QtWebEngineWidgets import *
+from PyQt5.QtWebChannel import *
 import google.generativeai as genai
 import markdown
-import time
 
 # APIキー設定
 load_dotenv()
@@ -17,303 +19,702 @@ if not api_key:
     raise ValueError("環境変数 GENAI_API_KEY が見つかりません。")
 genai.configure(api_key=api_key)
 
-# モデル初期化関数
+# モデル初期化
 def init_model(system_instruction="", history_param=None):
-    model = genai.GenerativeModel(model_name='gemini-2.0-flash', system_instruction=system_instruction.strip() if system_instruction.strip() else None)
+    model = genai.GenerativeModel(
+        model_name='gemini-2.0-flash', 
+        system_instruction=system_instruction.strip() if system_instruction.strip() else None
+    )
     return model.start_chat(history=history_param or [])
 
-# グローバル変数
-system_instruction = ""
-convo = init_model(system_instruction)
-history = []
-modelName = "モデル"
-chat_markdown = ""
-html_chat = None
-html_initialized = False
+class LinkHandler(QObject):
+    @pyqtSlot(str)
+    def link_click(self, url):
+        reply = QMessageBox.question(
+            None, "確認", f"このリンクを開きますか？\n\n{url}",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl(url))
 
-# Tkinter ウィンドウ初期化
-window = TkinterDnD.Tk()
-window.title("Gemini チャット")
-window.geometry("900x900")
-window.state('zoomed')
-
-# システム命令入力欄
-sys_inst_frame = tk.Frame(window)
-sys_inst_frame.pack(fill=tk.X, padx=10, pady=5)
-tk.Label(sys_inst_frame, text="システムインタラクション:").pack(anchor=tk.W)
-sys_inst_entry = scrolledtext.ScrolledText(sys_inst_frame, height=3, wrap=tk.WORD)
-sys_inst_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-
-def apply_system_instruction():
-    global convo, history, system_instruction, chat_markdown
-    instruction = sys_inst_entry.get("1.0", tk.END).strip()
-    system_instruction = instruction
-    convo = init_model(system_instruction)
-    history.clear()
-    chat_markdown = ""
-    clear_chat_area()
-    add_message_to_chat("[システム]", "システムインタラクションを更新し、会話をリセットしました。")
-
-tk.Button(sys_inst_frame, text="適用", command=apply_system_instruction).pack(side=tk.LEFT)
-
-# チャット表示エリア
-chat_frame = tk.Frame(window)
-chat_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
-
-def initialize_html_frame():
-    global html_chat, html_initialized
-    if html_initialized:
-        return True
+class ChatProcess(QThread):
+    message_received = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
     
-    try:
-        html_chat = HtmlFrame(chat_frame, messages_enabled = False)
-        html_chat.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
-        
-        # 初期化完了まで少し待つ
-        window.update_idletasks()
-        time.sleep(0.1)
-        
-        # ドラッグ&ドロップ設定
-        html_chat.drop_target_register(DND_FILES)
-        html_chat.dnd_bind('<<Drop>>', handle_drop)
-        
-        html_initialized = True
-        return True
-        
-    except Exception as e:
-        print(f"HtmlFrame初期化エラー: {e}")
-        html_initialized = False
-        return False
-
-# 起動時にHTML表示を初期化
-def initialize_on_startup():
-    if initialize_html_frame():
-        window.after(100, safe_update_html_display)
-    else:
-        print("HTML初期化失敗")
-
-# 表示更新
-def safe_update_html_display():
-    if not html_initialized or html_chat is None:
-        return
+    def __init__(self, convo, message, media_data=None):
+        super().__init__()
+        self.convo = convo
+        self.message = message
+        self.media_data = media_data
     
-    try:
-        # 基本的なHTMLテンプレート
+    def run(self):
+        try:
+            if self.media_data:
+                self.convo.send_message([self.media_data, self.message])
+            else:
+                self.convo.send_message(self.message)
+            reply = self.convo.last.text
+            self.message_received.emit(reply)
+        except Exception as e:
+            self.error_occurred.emit(f"{type(e).__name__} - {e}")
+
+
+class GeminiChatApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.system_instruction = ""
+        self.convo = init_model(self.system_instruction)
+        self.history = []
+        self.model_name = "モデル"
+        self.chat_markdown = ""
+        self.current_worker = None
+        self.is_processing = False
+        self.is_dark_theme = False
+        
+        self.init_ui()
+        self.setup_theme_palettes()
+        self.channel = QWebChannel()
+        self.link_handler = LinkHandler()
+        self.channel.registerObject("linkHandler", self.link_handler)
+        self.chat_html_view.page().setWebChannel(self.channel)
+        self.add_message("[システム]", "Geminiチャットへようこそ。")
+    
+    def setup_theme_palettes(self):
+        app = QApplication.instance()
+
+        app.setStyle("Fusion")
+        
+        # ダークテーマのパレット
+        self.dark_palette = app.palette()
+        self.dark_palette.setColor(self.dark_palette.Window, QColor(53, 53, 53))
+        self.dark_palette.setColor(self.dark_palette.WindowText, QColor(255, 255, 255))
+        self.dark_palette.setColor(self.dark_palette.Base, QColor(25, 25, 25))
+        self.dark_palette.setColor(self.dark_palette.AlternateBase, QColor(53, 53, 53))
+        self.dark_palette.setColor(self.dark_palette.ToolTipBase, QColor(255, 255, 255))
+        self.dark_palette.setColor(self.dark_palette.ToolTipText, QColor(255, 255, 255))
+        self.dark_palette.setColor(self.dark_palette.Text, QColor(255, 255, 255))
+        self.dark_palette.setColor(self.dark_palette.Button, QColor(53, 53, 53))
+        self.dark_palette.setColor(self.dark_palette.ButtonText, QColor(255, 255, 255))
+        self.dark_palette.setColor(self.dark_palette.BrightText, QColor(255, 0, 0))
+        self.dark_palette.setColor(self.dark_palette.Highlight, QColor(142, 45, 197))
+        self.dark_palette.setColor(self.dark_palette.HighlightedText, QColor(255, 255, 255))
+        
+        self.light_palette = app.style().standardPalette()
+        
+    def init_ui(self):
+        self.setWindowTitle("Gemini チャット")
+        self.setGeometry(100, 100, 1000, 800)
+
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+
+        # システムインタラクション・チャット欄・入力欄の3分割
+        splitter = QSplitter(Qt.Vertical)
+        main_layout.addWidget(splitter)
+
+        # システムインタラクション
+        sys_frame = QFrame()
+        sys_layout = QHBoxLayout(sys_frame)
+        sys_layout.setContentsMargins(0, 0, 0, 0)
+        sys_layout.setSpacing(10)
+
+        sys_label = QLabel("システムインタラクション:")
+        sys_label.setMinimumWidth(110)
+        sys_label.setMaximumWidth(110)
+        sys_layout.addWidget(sys_label)
+
+        self.sys_inst_entry = QTextEdit()
+        self.sys_inst_entry.setPlaceholderText("システムインタラクションを入力してください...")
+        self.sys_inst_entry.setAcceptRichText(False)
+        sys_layout.addWidget(self.sys_inst_entry)
+
+        self.apply_btn = QPushButton("適用")
+        self.apply_btn.clicked.connect(self.apply_system_instruction)
+        self.apply_btn.setMaximumWidth(60)
+        self.apply_btn.setMinimumWidth(60)
+        sys_layout.addWidget(self.apply_btn)
+
+        splitter.addWidget(sys_frame)
+
+        # チャット欄
+        self.chat_tabs = QTabWidget()
+        
+        # HTML
+        self.chat_html_view = QWebEngineView()
+        self.chat_html_view.setAcceptDrops(True)
+        self.chat_html_view.dragEnterEvent = self.drag_enter_event
+        self.chat_html_view.dropEvent = self.drop_event
+        self.chat_tabs.addTab(self.chat_html_view, "HTML表示")
+        
+        # テキスト
+        self.chat_text_view = QTextEdit()
+        self.chat_text_view.setReadOnly(True)
+        self.chat_text_view.setAcceptDrops(True)
+        self.chat_text_view.dragEnterEvent = self.drag_enter_event
+        self.chat_text_view.dropEvent = self.drop_event
+        font = QFont("Courier New", 10)
+        font.setFixedPitch(True)
+        self.chat_text_view.setFont(font)
+        self.chat_tabs.addTab(self.chat_text_view, "テキスト表示")
+        
+        self.chat_tabs.currentChanged.connect(self.on_tab_changed)
+        
+        splitter.addWidget(self.chat_tabs)
+
+        # 入力欄
+        input_frame = QFrame()
+        input_layout = QVBoxLayout(input_frame)
+
+        # 入力と送信
+        input_row = QHBoxLayout()
+        self.user_input = QTextEdit()
+        self.user_input.setPlaceholderText("メッセージを入力してください... (Ctrl+Enter で送信)")
+        self.user_input.setAcceptRichText(False)
+        self.user_input.keyPressEvent = self.key_press
+        input_row.addWidget(self.user_input)
+
+        self.send_btn = QPushButton("送信\n(Ctrl+Enter)")
+        self.send_btn.clicked.connect(self.send_text)
+        self.send_btn.setMaximumWidth(100)
+        input_row.addWidget(self.send_btn)
+
+        input_layout.addLayout(input_row)
+
+        # 画面下部のボタンたち
+        btn_layout = QHBoxLayout()
+        
+        btn_layout.addStretch()
+
+        self.media_btn = QPushButton("メディア送信")
+        self.media_btn.clicked.connect(self.send_media)
+        self.media_btn.setMaximumWidth(100)
+        btn_layout.addWidget(self.media_btn)
+
+        self.save_btn = QPushButton("保存")
+        self.save_btn.clicked.connect(self.save_chat)
+        self.save_btn.setMaximumWidth(60)
+        btn_layout.addWidget(self.save_btn)
+
+        self.load_btn = QPushButton("読み込み")
+        self.load_btn.clicked.connect(self.load_chat)
+        self.load_btn.setMaximumWidth(80)
+        btn_layout.addWidget(self.load_btn)
+
+        self.reset_btn = QPushButton("リセット")
+        self.reset_btn.clicked.connect(self.reset_chat)
+        self.reset_btn.setMaximumWidth(70)
+        btn_layout.addWidget(self.reset_btn)
+
+        btn_layout.addStretch()
+
+        self.dark_theme_checkbox = QCheckBox("ダークテーマ")
+        self.dark_theme_checkbox.setChecked(self.is_dark_theme)
+        self.dark_theme_checkbox.stateChanged.connect(self.toggle_theme)
+        btn_layout.addWidget(self.dark_theme_checkbox)
+
+        input_layout.addLayout(btn_layout)
+
+        splitter.addWidget(input_frame)
+
+        splitter.setSizes([80, 520, 200])
+        splitter.setStretchFactor(0, 1)  # sys_frame
+        splitter.setStretchFactor(1, 5)  # chat_tabs
+        splitter.setStretchFactor(2, 2)  # input_frame
+
+        QTimer.singleShot(100, self.update_chat)
+
+    def toggle_theme(self, state):
+        self.is_dark_theme = state == 2
+        app = QApplication.instance()
+        
+        if self.is_dark_theme:
+            app.setPalette(self.dark_palette)
+        else:
+            app.setPalette(self.light_palette)
+        
+        self.update_chat()
+
+    def get_html_theme_styles(self):
+        base_light = """
+            body { 
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+                margin: 15px; 
+                line-height: 1.6; 
+                background-color: #f8f9fa;
+                color: #000000;
+            }
+            h1, h2, h3, h4, h5, h6 { color: #333; margin-top: 20px; margin-bottom: 10px; }
+            .user { color: #0066cc; font-weight: bold; }
+            .model { color: #009900; font-weight: bold; }
+            .system { color: #666666; font-style: italic; }
+            .error { color: #cc0000; font-weight: bold; }
+            pre { background-color: #f1f3f4; padding: 15px; border-radius: 8px; overflow-x: auto;
+                border-left: 4px solid #4285f4; font-family: 'Courier New', monospace; white-space: pre-wrap; }
+            code { background-color: #e8eaed; padding: 2px 6px; border-radius: 4px; font-family: 'Courier New', monospace; }
+            blockquote { border-left: 4px solid #ddd; margin-left: 0; padding: 10px 20px;
+                        background-color: #f9f9f9; border-radius: 4px; }
+            table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; font-weight: bold; }
+            ul, ol { margin: 10px 0; padding-left: 20px; }
+            li { margin: 5px 0; }
+            p { margin: 10px 0; }
+            hr { border: none; border-top: 1px solid #ddd; margin: 20px 0; }
+            strong { font-weight: bold; }
+            em { font-style: italic; }
+        """
+
+        base_dark = """
+            body { 
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+                margin: 15px; 
+                line-height: 1.6; 
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            h1, h2, h3, h4, h5, h6 { color: #ffffff; margin-top: 20px; margin-bottom: 10px; }
+            .user { color: #66b3ff; font-weight: bold; }
+            .model { color: #66ff66; font-weight: bold; }
+            .system { color: #cccccc; font-style: italic; }
+            .error { color: #ff6666; font-weight: bold; }
+            pre { background-color: #1e1e1e; padding: 15px; border-radius: 8px; overflow-x: auto;
+                border-left: 4px solid #4285f4; font-family: 'Courier New', monospace; white-space: pre-wrap;
+                color: #ffffff; }
+            code { background-color: #3c3c3c; padding: 2px 6px; border-radius: 4px; 
+                font-family: 'Courier New', monospace; color: #ffffff; }
+            blockquote { border-left: 4px solid #555; margin-left: 0; padding: 10px 20px;
+                        background-color: #363636; border-radius: 4px; }
+            table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+            th, td { border: 1px solid #555; padding: 8px; text-align: left; }
+            th { background-color: #404040; font-weight: bold; }
+            ul, ol { margin: 10px 0; padding-left: 20px; }
+            li { margin: 5px 0; }
+            p { margin: 10px 0; }
+            hr { border: none; border-top: 1px solid #555; margin: 20px 0; }
+            strong { font-weight: bold; }
+            em { font-style: italic; }
+            a { color: #66b3ff; }
+            a:visited { color: #b366ff; }
+        """
+
+        return base_dark if self.is_dark_theme else base_light
+
+    def on_tab_changed(self, index):
+        if index == 0:
+            self.update_chat()
+        elif index == 1:
+            self.update_text()
+    
+    def set_input_enabled(self, enabled):
+        widgets = [self.user_input, self.send_btn, self.media_btn, self.apply_btn, self.sys_inst_entry]
+        for widget in widgets:
+            widget.setEnabled(enabled)
+        
+        if enabled:
+            self.send_btn.setText("送信\n(Ctrl+Enter)")
+            self.user_input.setPlaceholderText("メッセージを入力してください... (Ctrl+Enter で送信)")
+        else:
+            self.send_btn.setText("処理中...")
+            self.user_input.setPlaceholderText("処理中...")
+    
+    def drag_enter_event(self, event):
+        if not self.is_processing and event.mimeData().hasUrls():
+            event.acceptProposedAction()
+    
+    def drop_event(self, event):
+        if self.is_processing:
+            return
+        for url in event.mimeData().urls():
+            file_path = url.toLocalFile()
+            if os.path.isfile(file_path):
+                self.drop_file(file_path)
+    
+    def key_press(self, event):
+        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+            if event.modifiers() == Qt.ControlModifier and not self.is_processing: # Ctrl+Enter
+                self.send_text()
+                return
+        QTextEdit.keyPressEvent(self.user_input, event)
+    
+    def apply_system_instruction(self):
+        if not self.is_processing:
+            instruction = self.sys_inst_entry.toPlainText().strip()
+            self.system_instruction = instruction
+            self.convo = init_model(self.system_instruction)
+            self.history.clear()
+            self.chat_markdown = ""
+            self.add_message("[システム]", "システムインタラクションを更新し、会話をリセットしました。")
+    
+    def update_chat(self):        
         html_template = """
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="utf-8">
             <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }}
-                h4 {{ color: #333; border-bottom: 1px solid #eee; padding-bottom: 5px; }}
-                .user {{ color: #0066cc; }}
-                .model {{ color: #009900; }}
-                .system {{ color: #666666; font-style: italic; }}
-                .error {{ color: #cc0000; }}
-                pre {{ background-color: #f8f8f8; padding: 10px; border-radius: 5px; overflow-x: auto; }}
-                code {{ background-color: #f0f0f0; padding: 2px 4px; border-radius: 3px; }}
-                blockquote {{ border-left: 4px solid #ddd; margin-left: 0; padding-left: 20px; }}
+                {}
             </style>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/{}.min.css">
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+            <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+            <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+                onload="renderMathInElement(document.body, {{
+                    delimiters: [
+                        {{left: '$$', right: '$$', display: true}},
+                        {{left: '$', right: '$', display: false}}
+                    ],
+                    throwOnError: false
+                }});">
+            </script>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+            <script>hljs.highlightAll();</script>
+            <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+            <script>
+                document.addEventListener("DOMContentLoaded", function() {{
+                    new QWebChannel(qt.webChannelTransport, function(channel) {{
+                        window.linkHandler = channel.objects.linkHandler;
+                        document.querySelectorAll("a").forEach(function(link) {{
+                            const href = link.getAttribute("href");
+                            if (href && href.startsWith("http")) {{
+                                link.onclick = function(e) {{
+                                    e.preventDefault();
+                                    linkHandler.link_click(href);
+                                }};
+                            }}
+                        }});
+                    }});
+                }});
+            </script>
         </head>
         <body>
             {}
+            <script>
+                setTimeout(function() {{
+                    window.scrollTo(0, document.body.scrollHeight);
+                }}, 100);
+            </script>
         </body>
         </html>
         """
-        
-        # MarkdownをHTMLに変換
-        if chat_markdown:
+
+        if self.chat_markdown:
+            def extract_math_expressions(text):
+                math_blocks = []
+                def replacer(match):
+                    math_blocks.append(match.group(0))
+                    return f"@@MATH{len(math_blocks)-1}@@"
+                text = re.sub(r"\$\$(.+?)\$\$", replacer, text, flags=re.DOTALL)
+                text = re.sub(r"(?<!\$)\$(.+?)\$(?!\$)", replacer, text, flags=re.DOTALL)
+
+                return text, math_blocks
+
+            def restore_math_expressions(text, math_blocks):
+                for i, expr in enumerate(math_blocks):
+                    text = text.replace(f"@@MATH{i}@@", expr)
+                return text
+
+            protected_text, math_exprs = extract_math_expressions(self.chat_markdown)
             html_content = markdown.markdown(
-                chat_markdown, 
-                extensions=['fenced_code', 'tables', 'nl2br']
+                protected_text,
+                extensions=[
+                    'fenced_code',
+                    'tables', 'nl2br', 'toc', 'attr_list', 'def_list'
+                ]
             )
+            html_content = restore_math_expressions(html_content, math_exprs)
         else:
             html_content = "<p>チャットを開始してください</p>"
+
+        theme_styles = self.get_html_theme_styles()
+        highlight_theme = "atom-one-dark" if self.is_dark_theme else "atom-one-light"
         
-        # HTMLを整形
-        final_html = html_template.format(html_content)
-        # HTMLを読み込み
-        html_chat.load_html(final_html)
-        # スクロールを最下部に
-        def scroll_to_bottom():
-            try:
-                if html_chat and html_initialized:
-                    html_chat.yview_moveto(1.0)
-            except:
-                pass
-        window.after(200, scroll_to_bottom)
+        final_html = html_template.format(theme_styles, highlight_theme, html_content)
+        self.chat_html_view.setHtml(final_html)
+    
+    def update_text(self):
+        if not hasattr(self, 'chat_text_content'):
+            self.chat_text_content = ""
         
-    except Exception as e:
-        print(f"HTML表示更新エラー: {e}")
+        self.chat_text_view.setPlainText(self.chat_text_content)
+        cursor = self.chat_text_view.textCursor()
+        cursor.movePosition(cursor.End)
+        self.chat_text_view.setTextCursor(cursor)
+    
+    def regenerate(self):
+        self.chat_text_content = ""
+        
+        self.chat_text_content += "[システム] Geminiチャットへようこそ。\n" + "-"*30 + "\n\n"
+        
+        for entry in self.history:
+            role = entry.get('role', '')
+            parts = entry.get('parts', '')
+            
+            if role == 'user':
+                if isinstance(parts, list):
+                    # メディア付きメッセージの場合(そもそもメディア自体を保存していないので、この処理は不要かも（そのためメディアを添付した会話は再開不可能）)
+                    text_parts = [p for p in parts if isinstance(p, str)]
+                    media_parts = [p for p in parts if isinstance(p, dict)]
+                    
+                    if media_parts:
+                        file_info = f"**ファイル**: {media_parts[0].get('data', 'メディアファイル')}"
+                        if text_parts:
+                            file_info += f"\n\n**メッセージ**: {text_parts[0]}"
+                        self.chat_text_content += f"[あなた]\n{file_info}\n" + "="*50 + "\n\n"
+                    else:
+                        self.chat_text_content += f"[あなた]\n{parts[0] if parts else ''}\n" + "="*50 + "\n\n"
+                else:
+                    self.chat_text_content += f"[あなた]\n{parts}\n" + "="*50 + "\n\n"
+            elif role == 'model':
+                self.chat_text_content += f"[モデル]\n{parts}\n" + "="*50 + "\n\n"
 
-def update_chat_display():
-    # HTML表示の更新
-    if html_initialized:
-        window.after(50, safe_update_html_display)
+    def escape_except_code_blocks(self, text):
+        # HTMLのエスケープ時に、コードブロック内の文字が二重にエスケープされるので、その部分だけエスケープしないように設定。
+        # なお、言語名部分に<script>タグを入れると実行されてしまったので、一行目にタグがあれば削除する。
+        code_blocks = []
+        inline_codes = []
 
-def add_message_to_chat(sender, text):
-    global chat_markdown
-    if sender == "[あなた]":
-        chat_markdown += f"#### <span class='user'>あなた</span>\n{text}\n\n"
-    elif sender == "[モデル]":
-        chat_markdown += f"#### <span class='model'>モデル</span>\n{text}\n\n"
-    elif sender == "[システム]":
-        chat_markdown += f"#### <span class='system'>システム</span>\n*{text}*\n\n"
-    elif sender == "[エラー]":
-        chat_markdown += f"#### <span class='error'>エラー</span>\n**{text}**\n\n"
-    else:
-        chat_markdown += f"#### {sender}\n{text}\n\n"
-    update_chat_display()
+        def is_tag(line):
+            return bool(re.match(r'^```<[^>]+>', line.strip()))
 
-def clear_chat_area():
-    global chat_markdown
-    chat_markdown = ""
-    update_chat_display()
+        def codeblock_replacer(match):
+            full_block = match.group(0)
+            lines = full_block.splitlines()
 
-# 入力・送信
-input_frame = tk.Frame(window)
-input_frame.pack(fill=tk.X, padx=10, pady=5)
-user_input = scrolledtext.ScrolledText(input_frame, height=4, wrap=tk.WORD)
-user_input.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+            if lines and is_tag(lines[0]):
+                cleaned_block = "\n".join(["```"] + lines[1:])
+                code_blocks.append(cleaned_block)
+            else:
+                code_blocks.append(full_block)
 
-def send_text(event=None):
-    message = user_input.get("1.0", tk.END).strip()
-    if not message:
-        return "break"  # イベント処理を停止
-    user_input.delete("1.0", tk.END)
-    add_message_to_chat("[あなた]", message)
-    try:
-        convo.send_message(message)
-        reply = convo.last.text
-        add_message_to_chat("[モデル]", reply)
-        history.extend([{'role': 'user', 'parts': message}, {'role': 'model', 'parts': reply}])
-    except Exception as e:
-        add_message_to_chat("[エラー]", f"{type(e).__name__} - {e}")
-    return "break"  # イベント処理を停止
+            return f"@@CODEBLOCK{len(code_blocks)-1}@@"
 
-# Ctrl+Enterで送信するキーバインド
-def on_ctrl_enter(event):
-    send_text()
-    return "break"  # デフォルトの改行を防ぐ
+        text = re.sub(r"```.*?\n.*?```", codeblock_replacer, text, flags=re.DOTALL)
 
-user_input.bind('<Control-Return>', on_ctrl_enter)
-user_input.bind('<Control-KP_Enter>', on_ctrl_enter)
+        def inlinecode_replacer(match):
+            inline_codes.append(match.group(0))
+            return f"@@INLINE{len(inline_codes)-1}@@"
 
-tk.Button(input_frame, text="送信\n(Ctrl+Enter)", command=send_text).pack(side=tk.RIGHT)
+        text = re.sub(r"`[^`\n]+?`", inlinecode_replacer, text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        for i, code in enumerate(inline_codes):
+            text = text.replace(f"@@INLINE{i}@@", code)
+        for i, block in enumerate(code_blocks):
+            text = text.replace(f"@@CODEBLOCK{i}@@", block)
+        return text
 
-# ドラッグ＆ドロップ メディア処理
-def handle_dropped_file(file_path):
-    mime_type, _ = mimetypes.guess_type(file_path)
-    if not mime_type or not (mime_type.startswith(("image/", "video/", "audio/")) or mime_type == "application/pdf"):
-        add_message_to_chat("[システム]", "対応していないメディア形式です。")
-        return
-
-    user_message = user_input.get("1.0", tk.END).strip()
-    user_input.delete("1.0", tk.END)
-    try:
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
-        file_info = f"**ファイル**: `{os.path.basename(file_path)}` ({mime_type})"
-        if user_message:
-            file_info += f"\n\n**メッセージ**: {user_message}"
-        add_message_to_chat("[あなた]", file_info)
-
-        convo.send_message([
-            {"mime_type": mime_type, "data": file_bytes},
-            user_message or ""
+    def add_message(self, sender, text):
+        self.escaped_text = self.escape_except_code_blocks(text)
+        if sender == "[あなた]":
+            self.chat_markdown += f"#### <span class='user'>あなた</span>\n\n{self.escaped_text}\n\n---\n\n"
+        elif sender == "[モデル]":
+            self.chat_markdown += f"#### <span class='model'>モデル</span>\n\n{self.escaped_text}\n\n---\n\n"
+        elif sender == "[システム]":
+            self.chat_markdown += f"#### <span class='system'>システム</span>\n\n*{self.escaped_text}*\n\n---\n\n"
+        elif sender == "[エラー]":
+            self.chat_markdown += f"#### <span class='error'>エラー</span>\n\n**{self.escaped_text}**\n\n---\n\n"
+        else:
+            self.chat_markdown += f"#### {sender}\n\n{self.escaped_text}\n\n---\n\n"
+        
+        if not hasattr(self, 'chat_text_content'):
+            self.chat_text_content = ""
+        
+        if sender == "[あなた]":
+            self.chat_text_content += f"[あなた]\n{text}\n" + "="*50 + "\n\n"
+        elif sender == "[モデル]":
+            self.chat_text_content += f"[モデル]\n{text}\n" + "="*50 + "\n\n"
+        elif sender == "[システム]":
+            self.chat_text_content += f"[システム] {text}\n" + "-"*30 + "\n\n"
+        elif sender == "[エラー]":
+            self.chat_text_content += f"[エラー] {text}\n" + "-"*30 + "\n\n"
+        else:
+            self.chat_text_content += f"{sender}\n{text}\n" + "="*50 + "\n\n"
+        
+        self.update_chat()
+        self.update_text()
+    
+    def send_text(self):
+        if self.is_processing:
+            return
+        
+        message = self.user_input.toPlainText().strip()
+        if not message:
+            return
+        
+        self.is_processing = True
+        self.set_input_enabled(False)
+        
+        self.user_input.clear()
+        self.add_message("[あなた]", message)
+        
+        # 非同期処理のためスレッドをわける
+        self.current_worker = ChatProcess(self.convo, message)
+        self.current_worker.message_received.connect(self.message_received)
+        self.current_worker.error_occurred.connect(self.add_error)
+        self.current_worker.finished.connect(self.processing_finish)
+        self.current_worker.start()
+    
+    def message_received(self, reply):
+        self.add_message("[モデル]", reply)
+        self.history.extend([
+            {'role': 'user', 'parts': self.current_worker.message}, 
+            {'role': 'model', 'parts': reply}
         ])
-        reply = convo.last.text
-        add_message_to_chat("[モデル]", reply)
+    
+    def add_error(self, error_msg):
+        self.add_message("[エラー]", error_msg)
+    
+    def processing_finish(self):
+        self.is_processing = False
+        self.set_input_enabled(True)
+        self.user_input.setFocus()
+    
+    def drop_file(self, file_path):
+        if self.is_processing:
+            return
+        
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if not mime_type or not (mime_type.startswith(("image/", "video/", "audio/")) or mime_type == "application/pdf"):
+            self.add_message("[システム]", "対応していないメディア形式です。")
+            return
 
+        self.is_processing = True
+        self.set_input_enabled(False)
+
+        user_message = self.user_input.toPlainText().strip()
+        self.user_input.clear()
+        
+        try:
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+            
+            file_info = f"**ファイル**: `{os.path.basename(file_path)}` ({mime_type})"
+            if user_message:
+                file_info += f"\n\n**メッセージ**: {user_message}"
+            
+            self.add_message("[あなた]", file_info)
+            
+            media_data = {"mime_type": mime_type, "data": file_bytes}
+            
+            self.current_worker = ChatProcess(self.convo, user_message or "", media_data)
+            self.current_worker.message_received.connect(
+                lambda reply: self.media_received(reply, file_path, user_message, mime_type)
+            )
+            self.current_worker.error_occurred.connect(self.add_error)
+            self.current_worker.finished.connect(self.processing_finish)
+            self.current_worker.start()
+            
+        except Exception as e:
+            self.add_message("[エラー]", f"{type(e).__name__} - {e}")
+            self.processing_finish()
+    
+    def media_received(self, reply, file_path, user_message, mime_type):
+        self.add_message("[モデル]", reply)
+        
         parts = [{"mime_type": mime_type, "data": f"{file_path}"}]
         if user_message:
             parts.append(user_message)
-        history.append({'role': 'user', 'parts': parts})
-        history.append({'role': 'model', 'parts': reply})
-    except Exception as e:
-        add_message_to_chat("[エラー]", f"{type(e).__name__} - {e}")
+        
+        self.history.append({'role': 'user', 'parts': parts})
+        self.history.append({'role': 'model', 'parts': reply})
+    
+    def send_media(self):
+        if self.is_processing:
+            return
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "ファイルを選択",
+            "",
+            "すべてのメディアファイル (*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.mov *.webm *.avi *.pdf *.mp3 *.wav *.m4a *.aac *.flac *.ogg);;画像ファイル (*.png *.jpg *.jpeg *.webp *.bmp);;動画ファイル (*.mp4 *.mov *.webm *.avi);;PDFファイル (*.pdf);;音声ファイル (*.mp3 *.wav *.m4a *.aac *.flac *.ogg);;すべてのファイル (*.*)"
+        )
+        if file_path:
+            self.drop_file(file_path)
+    
+    def save_chat(self):
+        if self.is_processing:
+            return
+        
+        if not self.history:
+            QMessageBox.information(self, "保存", "保存する会話履歴がありません。")
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "会話を保存", "", "JSONファイル (*.json)"
+        )
+        if not file_path:
+            return
+        
+        try:
+            data = {
+                "modelName": self.model_name,
+                "system_instruction": self.system_instruction,
+                "history": self.history,
+                "chat_markdown": self.chat_markdown
+            }
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+            
+            self.add_message("[システム]", f"会話履歴を保存しました: `{file_path}`")
+        except Exception as e:
+            self.add_message("[エラー]", f"保存に失敗しました: {e}")
+    
+    def load_chat(self):
+        if self.is_processing:
+            return
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "会話を読み込み", "", "JSONファイル (*.json)"
+        )
+        if not file_path:
+            return
+        
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            self.system_instruction = data.get("system_instruction", "")
+            self.history = data.get("history", [])
+            self.chat_markdown = data.get("chat_markdown", "")
+            
+            self.regenerate()
+            
+            self.sys_inst_entry.setPlainText(self.system_instruction)
+            self.convo = init_model(self.system_instruction, self.history)
+            
+            self.update_chat()
+            self.update_text()
+            
+            self.add_message("[システム]", f"会話履歴を読み込みました: `{file_path}`")
+        except Exception as e:
+            self.add_message("[エラー]", f"読み込みに失敗しました: {e}")
+    
+    def reset_chat(self):
+        if self.is_processing:
+            return
+        
+        reply = QMessageBox.question(
+            self, "会話リセット", "会話をリセットしますか？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.convo = init_model(self.system_instruction)
+            self.history.clear()
+            self.chat_markdown = ""
+            self.chat_text_content = ""
+            self.add_message("[システム]", "会話をリセットしました。")
 
-def handle_drop(event):
-    file_paths = window.tk.splitlist(event.data)
-    for file_path in file_paths:
-        if os.path.isfile(file_path):
-            handle_dropped_file(file_path)
 
-# ウィンドウレベルでのドラッグ&ドロップ設定
-window.drop_target_register(DND_FILES)
-window.dnd_bind('<<Drop>>', handle_drop)
+def main():
+    app = QApplication(sys.argv)
+    
+    app.setApplicationName("Gemini Chat")
+    app.setApplicationVersion("2.0")
+    app.setOrganizationName("Gemini Chat App")
+    
+    window = GeminiChatApp()
+    window.show()
+    
+    sys.exit(app.exec_())
 
-def send_media_file():
-    all_media_types = [
-        ("すべてのメディアファイル", "*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.mov *.webm *.avi *.pdf *.mp3 *.wav *.m4a *.aac *.flac *.ogg"),
-        ("画像ファイル", "*.png *.jpg *.jpeg *.webp *.bmp"),
-        ("動画ファイル", "*.mp4 *.mov *.webm *.avi"),
-        ("PDFファイル", "*.pdf"),
-        ("音声ファイル", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg"),
-        ("すべてのファイル", "*.*")
-    ]
-    file_path = filedialog.askopenfilename(filetypes=all_media_types)
-    if file_path:
-        handle_dropped_file(file_path)
-
-
-# 会話保存・読み込み・リセットなど
-def save_chat():
-    if not history:
-        messagebox.showinfo("保存", "保存する会話履歴がありません。")
-        return
-    path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSONファイル", "*.json")])
-    if not path:
-        return
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"modelName": modelName, "system_instruction": system_instruction, "history": history, "chat_markdown": chat_markdown}, f, ensure_ascii=False, indent=4)
-        add_message_to_chat("[システム]", f"会話履歴を保存しました: `{path}`")
-    except Exception as e:
-        add_message_to_chat("[エラー]", f"保存に失敗しました: {e}")
-
-def load_chat():
-    global convo, history, system_instruction, chat_markdown
-    path = filedialog.askopenfilename(filetypes=[("JSONファイル", "*.json")])
-    if not path:
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        system_instruction = data.get("system_instruction", "")
-        history = data.get("history", [])
-        chat_markdown = data.get("chat_markdown", "")
-
-        sys_inst_entry.delete("1.0", tk.END)
-        sys_inst_entry.insert("1.0", system_instruction)
-        convo = init_model(system_instruction, history)
-        update_chat_display()
-        add_message_to_chat("[システム]", f"会話履歴を読み込みました: `{path}`")
-    except Exception as e:
-        add_message_to_chat("[エラー]", f"読み込みに失敗しました: {e}")
-
-def reset_chat():
-    global convo, history, chat_markdown
-    if messagebox.askyesno("会話リセット", "会話をリセットしますか？"):
-        convo = init_model(system_instruction)
-        history.clear()
-        chat_markdown = ""
-        clear_chat_area()
-        add_message_to_chat("[システム]", "会話をリセットしました。")
-
-btn_frame = tk.Frame(window)
-btn_frame.pack(pady=5)
-tk.Button(btn_frame, text="メディアファイルを送信", command=send_media_file).pack(side=tk.LEFT, padx=5)
-tk.Button(btn_frame, text="会話を保存", command=save_chat).pack(side=tk.LEFT, padx=5)
-tk.Button(btn_frame, text="会話を読み込み", command=load_chat).pack(side=tk.LEFT, padx=5)
-tk.Button(btn_frame, text="会話リセット", command=reset_chat).pack(side=tk.LEFT, padx=5)
-
-# 起動時のメッセージ
-add_message_to_chat("[システム]", "Geminiチャットへようこそ。")
-
-# HTML表示の初期化
-window.after(500, initialize_on_startup)
-
-# GUI起動
-window.mainloop()
+if __name__ == "__main__":
+    main()
