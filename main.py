@@ -469,38 +469,55 @@ class GeminiChatApp(QMainWindow):
                 self.chat_text_content += f"[モデル]\n{parts}\n" + "="*50 + "\n\n"
 
     def escape_except_code_blocks(self, text):
-        # HTMLのエスケープ時に、コードブロック内の文字が二重にエスケープされるので、その部分だけエスケープしないように設定。
+        # HTMLのエスケープ時に、コードブロック内の文字が二重にエスケープされるので、その部分だけエスケープしないように設定。具体的には内容を一時的に保持しておいて、エスケープ後に復元する。
         # なお、言語名部分に<script>タグを入れると実行されてしまったので、一行目にタグがあれば削除する。
-        code_blocks = []
-        inline_codes = []
+            code_blocks = []
+            inline_codes = []
 
-        def is_tag(line):
-            return bool(re.match(r'^```<[^>]+>', line.strip()))
+            def is_htmltag(line):
+                return bool(re.match(r'^```<[^>]+>', line.strip()))
 
-        def codeblock_replacer(match):
-            full_block = match.group(0)
-            lines = full_block.splitlines()
+            result_lines = []
+            in_code_block = False
+            current_code_block = []
+            code_block_lang = ""
 
-            if lines and is_tag(lines[0]):
-                cleaned_block = "\n".join(["```"] + lines[1:])
-                code_blocks.append(cleaned_block)
-            else:
-                code_blocks.append(full_block)
+            lines = text.splitlines()
 
-            return f"@@CODEBLOCK{len(code_blocks)-1}@@"
+            for line in lines:
+                if not in_code_block:
+                    if line.strip().startswith("```"):
+                        in_code_block = True
+                        code_block_lang = line.strip()
+                        if is_htmltag(code_block_lang):
+                            current_code_block = ["```"]
+                        else:
+                            current_code_block = [code_block_lang]
+                    else:
+                        def inline_replacer(m):
+                            inline_codes.append(m.group(0))
+                            return f"@@INLINE{len(inline_codes)-1}@@"
 
-        text = re.sub(r"```.*?\n.*?```", codeblock_replacer, text, flags=re.DOTALL)
+                        safe_line = re.sub(r"`[^`\n]+?`", inline_replacer, line)
+                        safe_line = (safe_line.replace("&", "&amp;")
+                                            .replace("<", "&lt;")
+                                            .replace(">", "&gt;"))
+                        result_lines.append(safe_line)
+                else:
+                    current_code_block.append(line)
+                    if line.strip() == "```":
+                        in_code_block = False
+                        placeholder = f"@@CODEBLOCK{len(code_blocks)}@@"
+                        code_blocks.append("\n".join(current_code_block))
+                        result_lines.append(placeholder)
 
-        def inlinecode_replacer(match):
-            inline_codes.append(match.group(0))
-            return f"@@INLINE{len(inline_codes)-1}@@"
+            final_text = "\n".join(result_lines)
+            for i, code in enumerate(code_blocks):
+                final_text = final_text.replace(f"@@CODEBLOCK{i}@@", code)
+            for i, inline in enumerate(inline_codes):
+                final_text = final_text.replace(f"@@INLINE{i}@@", inline)
 
-        text = re.sub(r"`[^`\n]+?`", inlinecode_replacer, text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        for i, code in enumerate(inline_codes):
-            text = text.replace(f"@@INLINE{i}@@", code)
-        for i, block in enumerate(code_blocks):
-            text = text.replace(f"@@CODEBLOCK{i}@@", block)
-        return text
+            return final_text
 
     def add_message(self, sender, text):
         self.escaped_text = self.escape_except_code_blocks(text)
