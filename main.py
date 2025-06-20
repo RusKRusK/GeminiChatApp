@@ -499,9 +499,7 @@ class GeminiChatApp(QMainWindow):
                             return f"@@INLINE{len(inline_codes)-1}@@"
 
                         safe_line = re.sub(r"`[^`\n]+?`", inline_replacer, line)
-                        safe_line = (safe_line.replace("&", "&amp;")
-                                            .replace("<", "&lt;")
-                                            .replace(">", "&gt;"))
+                        safe_line = safe_line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                         result_lines.append(safe_line)
                 else:
                     current_code_block.append(line)
