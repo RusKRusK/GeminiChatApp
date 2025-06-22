@@ -11,6 +11,7 @@ from PyQt5.QtWebEngineWidgets import *
 from PyQt5.QtWebChannel import *
 import google.generativeai as genai
 import markdown
+import argparse
 
 # APIキー設定
 load_dotenv()
@@ -18,6 +19,13 @@ api_key = os.getenv("GENAI_API_KEY")
 if not api_key:
     raise ValueError("環境変数 GENAI_API_KEY が見つかりません。")
 genai.configure(api_key=api_key)
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--prompt", type=str, help="デフォルトのシステムインストラクション")
+args = parser.parse_args()
+instruction = ""
+if args.prompt:
+    instruction = args.prompt
 
 # モデル初期化
 def init_model(system_instruction="", history_param=None):
@@ -62,7 +70,7 @@ class ChatProcess(QThread):
 class GeminiChatApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.system_instruction = ""
+        self.system_instruction = instruction
         self.convo = init_model(self.system_instruction)
         self.history = []
         self.model_name = "モデル"
@@ -109,23 +117,24 @@ class GeminiChatApp(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # システムインタラクション・チャット欄・入力欄の3分割
+        # システムインストラクション・チャット欄・入力欄の3分割
         splitter = QSplitter(Qt.Vertical)
         main_layout.addWidget(splitter)
 
-        # システムインタラクション
+        # システムインストラクション
         sys_frame = QFrame()
         sys_layout = QHBoxLayout(sys_frame)
         sys_layout.setContentsMargins(0, 0, 0, 0)
         sys_layout.setSpacing(10)
 
-        sys_label = QLabel("システムインタラクション:")
+        sys_label = QLabel("システムインストラクション:")
         sys_label.setMinimumWidth(150)
         sys_label.setMaximumWidth(150)
         sys_layout.addWidget(sys_label)
 
         self.sys_inst_entry = QTextEdit()
-        self.sys_inst_entry.setPlaceholderText("システムインタラクションを入力してください...")
+        self.sys_inst_entry.append(instruction)
+        self.sys_inst_entry.setPlaceholderText("システムインストラクションを入力してください...")
         self.sys_inst_entry.setAcceptRichText(False)
         sys_layout.addWidget(self.sys_inst_entry)
 
@@ -345,7 +354,7 @@ class GeminiChatApp(QMainWindow):
             self.history.clear()
             self.chat_markdown = ""
             self.chat_text_content = ""
-            self.add_message("[システム]", "システムインタラクションを更新し、会話をリセットしました。")
+            self.add_message("[システム]", "システムインストラクションを更新し、会話をリセットしました。")
     
     def update_chat(self):        
         html_template = """
