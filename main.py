@@ -344,6 +344,7 @@ class GeminiChatApp(QMainWindow):
             self.convo = init_model(self.system_instruction)
             self.history.clear()
             self.chat_markdown = ""
+            self.chat_text_content = ""
             self.add_message("[システム]", "システムインタラクションを更新し、会話をリセットしました。")
     
     def update_chat(self):        
@@ -584,13 +585,37 @@ class GeminiChatApp(QMainWindow):
         self.user_input.setFocus()
     
     def drop_file(self, file_path):
+
+        def is_text_file(file_path, try_bytes=512):
+            try:
+                with open(file_path, 'rb') as f:
+                    chunk = f.read(try_bytes)
+                if b'\x00' in chunk:
+                    return False
+                try:
+                    chunk.decode('utf-8')
+                    return True
+                except UnicodeDecodeError:
+                    return False
+            except Exception:
+                return False
+
         if self.is_processing:
             return
         
         mime_type, _ = mimetypes.guess_type(file_path)
-        if not mime_type or not (mime_type.startswith(("image/", "video/", "audio/")) or mime_type == "application/pdf"):
-            self.add_message("[システム]", "対応していないメディア形式です。")
-            return
+        if not mime_type:
+            if is_text_file(file_path):
+                mime_type = "text/plain"
+            else:
+                self.add_message("[システム]", "対応していないメディア形式です。")
+                return
+        elif not (mime_type.startswith(("image/", "video/", "audio/", "text/")) or mime_type == "application/pdf"):
+            if is_text_file(file_path):
+                mime_type = "text/plain"
+            else:
+                self.add_message("[システム]", "対応していないメディア形式です。")
+                return
 
         self.is_processing = True
         self.set_input_enabled(False)
@@ -640,7 +665,7 @@ class GeminiChatApp(QMainWindow):
             self,
             "ファイルを選択",
             "",
-            "すべてのメディアファイル (*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.mov *.webm *.avi *.pdf *.mp3 *.wav *.m4a *.aac *.flac *.ogg);;画像ファイル (*.png *.jpg *.jpeg *.webp *.bmp);;動画ファイル (*.mp4 *.mov *.webm *.avi);;PDFファイル (*.pdf);;音声ファイル (*.mp3 *.wav *.m4a *.aac *.flac *.ogg);;すべてのファイル (*.*)"
+            "すべてのファイル (*.*)"
         )
         if file_path:
             self.drop_file(file_path)
