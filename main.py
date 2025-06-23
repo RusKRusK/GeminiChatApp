@@ -86,6 +86,7 @@ class GeminiChatApp(QMainWindow):
         self.channel.registerObject("linkHandler", self.link_handler)
         self.chat_html_view.page().setWebChannel(self.channel)
         self.add_message("[システム]", "Geminiチャットへようこそ。")
+        self.user_input.setFocus()
     
     def setup_theme_palettes(self):
         app = QApplication.instance()
@@ -355,6 +356,7 @@ class GeminiChatApp(QMainWindow):
             self.chat_markdown = ""
             self.chat_text_content = ""
             self.add_message("[システム]", "システムインストラクションを更新し、会話をリセットしました。")
+            self.user_input.setFocus()
     
     def update_chat(self):        
         html_template = """
@@ -751,6 +753,7 @@ class GeminiChatApp(QMainWindow):
             self.chat_markdown = ""
             self.chat_text_content = ""
             self.add_message("[システム]", "会話をリセットしました。")
+            self.user_input.setFocus()
 
 
 def main():
