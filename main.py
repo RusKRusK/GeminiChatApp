@@ -22,6 +22,7 @@ genai.configure(api_key=api_key)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--prompt", type=str, help="デフォルトのシステムインストラクション")
+parser.add_argument("-d", action="store_true", help="起動時にダークテーマを有効にする")
 args = parser.parse_args()
 instruction = ""
 if args.prompt:
@@ -77,7 +78,7 @@ class GeminiChatApp(QMainWindow):
         self.chat_markdown = ""
         self.current_worker = None
         self.is_processing = False
-        self.is_dark_theme = False
+        self.is_dark_theme = args.d
         
         self.init_ui()
         self.setup_theme_palettes()
@@ -85,7 +86,11 @@ class GeminiChatApp(QMainWindow):
         self.link_handler = LinkHandler()
         self.channel.registerObject("linkHandler", self.link_handler)
         self.chat_html_view.page().setWebChannel(self.channel)
+        app = QApplication.instance()
+        if args.d:
+            app.setPalette(self.dark_palette)
         self.add_message("[システム]", "Geminiチャットへようこそ。")
+
         self.user_input.setFocus()
     
     def setup_theme_palettes(self):
