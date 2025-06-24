@@ -576,6 +576,7 @@ class GeminiChatApp(QMainWindow):
     def add_message(self, sender, text):
         # 新しいメッセージをログに記録して表示を更新する
         # マークダウンに追加
+        # 名前とクラス名を紐づけ
         sender_class_map = {
             "[あなた]": "user",
             "[モデル]": "model",
