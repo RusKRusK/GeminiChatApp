@@ -522,8 +522,8 @@ class GeminiChatApp(QMainWindow):
             html_content = restore_math_expressions(html_content, math_blocks)
 
             # HTMLタグと属性のホワイトリスト
-            allowed_tags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'b', 'i', 'u', 's', 'strike', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'br', 'span', 'a']
-            allowed_attrs = {'*': ['class'], 'a': ['href', 'title'], 'span': ['class']}
+            allowed_tags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'b', 'i', 'u', 's', 'strike', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'br', 'span', 'a', 'img', 'details', 'summary']
+            allowed_attrs = {'*': ['class'], 'a': ['href', 'title'], 'span': ['class'], 'img': ['src']}
 
             safe_html_content = bleach.clean(html_content, tags=allowed_tags, attributes=allowed_attrs) # bleachでエスケープする。これによってマークダウンの引用やコードブロック内の表示を崩さない
         else: # この分岐なに？？？？？？？？
