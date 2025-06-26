@@ -471,63 +471,60 @@ class GeminiChatApp(QMainWindow):
         </body>
         </html>
         """
+    
+        # 数式が壊れちゃうのでいろいろやる
+        # テキストから、$...$や$$...$$となっている箇所を取り出して、一時的に置き換え
+        math_blocks = []
 
-        if self.chat_markdown:
-            # 数式が壊れちゃうのでいろいろやる
-            # テキストから、$...$や$$...$$となっている箇所を取り出して、一時的に置き換え
-            math_blocks = []
+        # 数式おきかえ関数
+        def math_replacer(match):
+            math_blocks.append(match.group(0))
+            return f"@@MATH{len(math_blocks)-1}@@"
 
-            # 数式おきかえ関数
-            def math_replacer(match):
-                math_blocks.append(match.group(0))
-                return f"@@MATH{len(math_blocks)-1}@@"
+        # もどす関数
+        def restore_math_expressions(text, blocks):
+            for i, expr in enumerate(blocks):
+                text = text.replace(f"@@MATH{i}@@", expr)
+            return text
 
-            # もどす関数
-            def restore_math_expressions(text, blocks):
-                for i, expr in enumerate(blocks):
-                    text = text.replace(f"@@MATH{i}@@", expr)
-                return text
+        # コードブロックとそれ以外のテキストに分割する
+        # re.splitのセパレータをキャプチャグループ `()` で囲むと、セパレータ自身も結果に含まれる。その結果、partsは次のようになる
+        # parts[0] = 最初のコードブロックの前の通常テキスト
+        # parts[1] = 最初のコードブロック全体
+        # parts[2] = 1番目と2番目のコードブロックの間の通常テキスト
+        parts = re.split(r"(```[\s\S]*?```)", self.chat_markdown)
 
-            # コードブロックとそれ以外のテキストに分割する
-            # re.splitのセパレータをキャプチャグループ `()` で囲むと、セパレータ自身も結果に含まれる。その結果、partsは次のようになる
-            # parts[0] = 最初のコードブロックの前の通常テキスト
-            # parts[1] = 最初のコードブロック全体
-            # parts[2] = 1番目と2番目のコードブロックの間の通常テキスト
-            parts = re.split(r"(```[\s\S]*?```)", self.chat_markdown)
+        protected_parts = []
+        for i, part in enumerate(parts):
+            is_code_block = (i % 2 == 1)
 
-            protected_parts = []
-            for i, part in enumerate(parts):
-                is_code_block = (i % 2 == 1)
+            if is_code_block:
+                # コードブロックは何も処理せず、そのまま追加
+                protected_parts.append(part)
+            else:
+                # コードブロックでない部分にのみ、数式保護処理を適用
+                temp_text = part
+                temp_text = re.sub(r"\$\$(.+?)\$\$", math_replacer, temp_text, flags=re.DOTALL) # $$...$$のパターン
+                temp_text = re.sub(r"(?<!\$)\$(.+?)\$(?!\$)", math_replacer, temp_text, flags=re.DOTALL) # $...$のパターン
+                protected_parts.append(temp_text)
 
-                if is_code_block:
-                    # コードブロックは何も処理せず、そのまま追加
-                    protected_parts.append(part)
-                else:
-                    # コードブロックでない部分にのみ、数式保護処理を適用
-                    temp_text = part
-                    temp_text = re.sub(r"\$\$(.+?)\$\$", math_replacer, temp_text, flags=re.DOTALL) # $$...$$のパターン
-                    temp_text = re.sub(r"(?<!\$)\$(.+?)\$(?!\$)", math_replacer, temp_text, flags=re.DOTALL) # $...$のパターン
-                    protected_parts.append(temp_text)
+        # 全部くっつけちゃう
+        protected_markdown = "".join(protected_parts)
 
-            # 全部くっつけちゃう
-            protected_markdown = "".join(protected_parts)
+        # マークダウンをHTMLに変換
+        html_content = markdown.markdown(
+            protected_markdown,
+            extensions=['fenced_code', 'tables', 'nl2br', 'toc', 'attr_list', 'def_list']
+        )
 
-            # マークダウンをHTMLに変換
-            html_content = markdown.markdown(
-                protected_markdown,
-                extensions=['fenced_code', 'tables', 'nl2br', 'toc', 'attr_list', 'def_list']
-            )
+        # 数式を戻す
+        html_content = restore_math_expressions(html_content, math_blocks)
 
-            # 数式を戻す
-            html_content = restore_math_expressions(html_content, math_blocks)
+        # HTMLタグと属性のホワイトリスト
+        allowed_tags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'b', 'i', 'u', 's', 'strike', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'br', 'span', 'a', 'img', 'details', 'summary']
+        allowed_attrs = {'*': ['class'], 'a': ['href', 'title'], 'span': ['class'], 'img': ['src']}
 
-            # HTMLタグと属性のホワイトリスト
-            allowed_tags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'b', 'i', 'u', 's', 'strike', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'br', 'span', 'a', 'img', 'details', 'summary']
-            allowed_attrs = {'*': ['class'], 'a': ['href', 'title'], 'span': ['class'], 'img': ['src']}
-
-            safe_html_content = bleach.clean(html_content, tags=allowed_tags, attributes=allowed_attrs) # bleachでエスケープする。これによってマークダウンの引用やコードブロック内の表示を崩さない
-        else: # この分岐なに？？？？？？？？
-            html_content = "<p>チャットを開始してください</p>"
+        safe_html_content = bleach.clean(html_content, tags=allowed_tags, attributes=allowed_attrs) # bleachでエスケープする。これによってマークダウンの引用やコードブロック内の表示を崩さない
 
         # 現在のテーマに合わせたスタイルを取得
         theme_styles = self.get_html_theme_styles()
