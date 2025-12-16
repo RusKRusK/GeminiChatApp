@@ -10,6 +10,7 @@ from PyQt5.QtGui import *
 from PyQt5.QtWebEngineWidgets import *
 from PyQt5.QtWebChannel import *
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import markdown
 import argparse
 import bleach
@@ -32,9 +33,16 @@ if args.prompt: # デフォルトのシステムインストラクションを�
 
 # モデル初期化
 def init_model(system_instruction="", history_param=None):
+    safety_settings = {
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+    }
     model = genai.GenerativeModel(
         model_name='gemini-2.5-flash', 
-        system_instruction=system_instruction.strip() if system_instruction.strip() else None
+        system_instruction=system_instruction.strip() if system_instruction.strip() else None,
+        safety_settings=safety_settings
     )
     return model.start_chat(history=history_param or [])
 
