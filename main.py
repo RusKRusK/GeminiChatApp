@@ -33,7 +33,7 @@ if args.prompt: # デフォルトのシステムインストラクションを�
 # モデル初期化
 def init_model(system_instruction="", history_param=None):
     model = genai.GenerativeModel(
-        model_name='gemini-2.0-flash', 
+        model_name='gemini-2.5-flash', 
         system_instruction=system_instruction.strip() if system_instruction.strip() else None
     )
     return model.start_chat(history=history_param or [])
